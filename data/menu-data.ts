@@ -151,6 +151,19 @@ export const MENU_DATA: IMenuData[] = [
     ],
   },
   {
+    id: "3.5",
+    title: "Animação da Pilha de Daniell",
+    color: "#ff5731",
+    pages: [
+      {
+        numero: 1,
+        texto: "Simulação interativa da Pilha de Daniell - Célula Galvânica. Monte a pilha arrastando os componentes para as posições corretas e veja a lâmpada acender quando tudo estiver no lugar certo!",
+        link: "daniellAnimation",
+        params: { title: "Animação da Pilha de Daniell" },
+      },
+    ],
+  },
+  {
     id: "4",
     title: "Eletroquímica e o Cotidiano",
     color: "#ff5731",

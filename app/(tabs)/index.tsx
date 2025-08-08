@@ -36,11 +36,14 @@ export default function Index() {
   const handlePress = (title: string, itemId: string) => {
     const item = MENU_DATA.find((i) => i.id === itemId);
     const info = searchResults[itemId];
-    const currentPage = item?.pages[info?.pages?.[0] - 1]; 
+    
+    // When there's no search, use the first page of the item
+    const pageIndex = info?.pages?.[0] ? info.pages[0] - 1 : 0;
+    const currentPage = item?.pages[pageIndex]; 
     const firstPage = info?.pages?.[0]?.toString() ?? "";
 
-    
-    if(!!currentPage?.link) return navigation.navigate(currentPage?.link, { title, ...currentPage.params });;
+    // Check if the current page has a direct link
+    if(!!currentPage?.link) return navigation.navigate(currentPage?.link, { title, ...currentPage.params });
     
     if(!search && title === "Exercícios e aplicações") return navigation.navigate("questionsMenu", { title })
 
