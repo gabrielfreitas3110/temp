@@ -108,7 +108,7 @@ export const MENU_DATA: IMenuData[] = [
   {
     id: "3",
     title: "Pilhas e Eletrólise",
-    color: "#ff5731",
+    color: "#0288D1",
     images: [
       { id: "1", imgUrl: require("@/assets/images/pilhas-eletrolise-1.png") },
       { id: "2", imgUrl: require("@/assets/images/pilhas-eletrolise-2.png") },
@@ -153,7 +153,7 @@ export const MENU_DATA: IMenuData[] = [
   {
     id: "3.5",
     title: "Animação da Pilha de Daniell",
-    color: "#ff5731",
+    color: "#7b1fa2",
     pages: [
       {
         numero: 1,
@@ -166,7 +166,7 @@ export const MENU_DATA: IMenuData[] = [
   {
     id: "4",
     title: "Eletroquímica e o Cotidiano",
-    color: "#ff5731",
+    color: "#d84315",
     images: [
       {
         id: "1",

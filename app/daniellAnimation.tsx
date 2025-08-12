@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   Image,
   Animated,
   PanResponder,
-  Dimensions,
   ScrollView,
   SafeAreaView,
   LayoutChangeEvent,
@@ -17,11 +16,24 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 
-// Tipos TypeScript
-type ZoneId = 'zone-lamp' | 'zone-zn-solution' | 'zone-cu-solution' | 'zone-salt-bridge' | 'slot-zn-electrode' | 'slot-cu-electrode';
-type ComponentId = 'lamp' | 'zn-solution' | 'cu-solution' | 'salt-bridge' | 'zn-electrode' | 'cu-electrode';
+/* ========================= Tipos ========================= */
+type ZoneId =
+  | 'zone-lamp'
+  | 'zone-zn-solution'
+  | 'zone-cu-solution'
+  | 'zone-salt-bridge'
+  | 'slot-zn-electrode'
+  | 'slot-cu-electrode';
 
-interface Component {
+type ComponentId =
+  | 'lamp'
+  | 'zn-solution'
+  | 'cu-solution'
+  | 'salt-bridge'
+  | 'zn-electrode'
+  | 'cu-electrode';
+
+interface ComponentDef {
   id: ComponentId;
   label: string;
   image: any;
@@ -47,7 +59,8 @@ interface Zone {
 
 type Placed = Partial<Record<ZoneId, ComponentId>>;
 
-const COMPONENTS: Component[] = [
+/* ===================== Dados/Constantes ===================== */
+const COMPONENTS: ComponentDef[] = [
   { id: 'lamp', label: 'Lâmpada', targetZone: 'zone-lamp', image: require('@/assets/images/lampada.png') },
   { id: 'zn-solution', label: 'Solução de ZnSO₄', targetZone: 'zone-zn-solution', image: require('@/assets/images/bequer_esquerdo.png') },
   { id: 'cu-solution', label: 'Solução de CuSO₄', targetZone: 'zone-cu-solution', image: require('@/assets/images/bequer_direita.png') },
@@ -56,7 +69,7 @@ const COMPONENTS: Component[] = [
   { id: 'cu-electrode', label: 'Eletrodo de Cobre', targetZone: 'slot-cu-electrode', image: require('@/assets/images/eletrodo_cobre.png') },
 ];
 
-const ZONES: Zone[] = [
+const INITIAL_ZONES: Zone[] = [
   { id: 'zone-lamp', label: 'Lâmpada', bounds: null, isOccupied: false, occupiedBy: null, isHighlighted: false, isEnabled: true },
   { id: 'zone-zn-solution', label: 'Solução de ZnSO₄', bounds: null, isOccupied: false, occupiedBy: null, isHighlighted: false, isEnabled: true },
   { id: 'zone-cu-solution', label: 'Solução de CuSO₄', bounds: null, isOccupied: false, occupiedBy: null, isHighlighted: false, isEnabled: true },
@@ -65,806 +78,446 @@ const ZONES: Zone[] = [
   { id: 'slot-cu-electrode', label: 'Eletrodo de Cobre', bounds: null, isOccupied: false, occupiedBy: null, isHighlighted: false, isEnabled: false },
 ];
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
+/* ========================= Componente ========================= */
 export default function DaniellAnimation() {
   const router = useRouter();
-  
-  // Estados principais
-  const [availableComponents, setAvailableComponents] = useState<Component[]>(COMPONENTS);
-  const [zones, setZones] = useState<Zone[]>(ZONES);
+
+  // estados
+  const [available, setAvailable] = useState<ComponentDef[]>(COMPONENTS);
+  const [zones, setZones] = useState<Zone[]>(INITIAL_ZONES);
   const [placed, setPlaced] = useState<Placed>({});
-  
-  // Estados de UI
+  const [dragged, setDragged] = useState<ComponentId | null>(null);
+  const [dragPos, setDragPos] = useState({ x: 0, y: 0 });
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [okMsg, setOkMsg] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
   const [showElectronFlow, setShowElectronFlow] = useState(false);
-  const [draggedComponent, setDraggedComponent] = useState<ComponentId | null>(null);
-  const [dragPosition, setDragPosition] = useState({ x: 0, y: 0 });
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showSuccess, setShowSuccess] = useState<string | null>(null);
-  const [boardScrollOffset, setBoardScrollOffset] = useState({ x: 0, y: 0 });
-  
-  // Animações
-  const lampGlowAnim = useRef(new Animated.Value(0)).current;
-  const componentAnimations = useRef<{ [key: string]: Animated.Value }>({}).current;
-  
-  // Refs para medição
-  const zoneRefs = useRef<{ [key: string]: View | null }>({});
-  const boardScrollRef = useRef<ScrollView | null>(null);
-  
-  // Inicializar animações dos componentes
+
+  // animações
+  const itemScale = useRef<Record<string, Animated.Value>>({}).current;
+  const lampGlow = useRef(new Animated.Value(0)).current;
+
+  // refs
+  const zoneRefs = useRef<Record<string, View | null>>({});
+
   useEffect(() => {
-    COMPONENTS.forEach(comp => {
-      componentAnimations[comp.id] = new Animated.Value(1);
-    });
+    COMPONENTS.forEach(c => (itemScale[c.id] = new Animated.Value(1)));
   }, []);
 
-  // Hook para medir zona
-  const measureZone = (zoneId: ZoneId, event: LayoutChangeEvent) => {
-    const { x, y, width, height } = event.nativeEvent.layout;
-    
-    // Medir posição absoluta na tela
-    zoneRefs.current[zoneId]?.measureInWindow((windowX, windowY) => {
-      setZones(prev => prev.map(zone => 
-        zone.id === zoneId 
-          ? { ...zone, bounds: { x: windowX, y: windowY, width, height } }
-          : zone
-      ));
+  /* ========================= Medição ========================= */
+  const measureZone = (id: ZoneId, e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    zoneRefs.current[id]?.measureInWindow((x, y) => {
+      setZones(prev => prev.map(z => (z.id === id ? { ...z, bounds: { x, y, width, height } } : z)));
     });
   };
 
-  // Função para verificar colisão com compensação de scroll
-  const checkCollision = (dragX: number, dragY: number, zone: Zone): boolean => {
-    if (!zone.bounds) return false;
-    
-    const { x, y, width, height } = zone.bounds;
-    const centerX = dragX;
-    const centerY = dragY;
-    
-    return (
-      centerX >= x && 
-      centerX <= x + width && 
-      centerY >= y && 
-      centerY <= y + height
+  /* ==================== Colisão / Busca ==================== */
+  const inside = (x: number, y: number, b: Box) => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+
+  const findZoneFor = (x: number, y: number, id: ComponentId): Zone | null => {
+    const def = COMPONENTS.find(c => c.id === id);
+    if (!def) return null;
+
+    if (id === 'zn-electrode' && !placed['zone-zn-solution']) return null;
+    if (id === 'cu-electrode' && !placed['zone-cu-solution']) return null;
+
+    const z = zones.find(
+      zone =>
+        zone.id === def.targetZone &&
+        zone.isEnabled &&
+        !zone.isOccupied &&
+        zone.bounds &&
+        inside(x, y, zone.bounds)
     );
+    return z ?? null;
   };
 
-  // Função para encontrar zona válida
-  const findValidZone = (dragX: number, dragY: number, componentId: ComponentId): Zone | null => {
-    const component = COMPONENTS.find(comp => comp.id === componentId);
-    if (!component) return null;
-    
-    // Verificar se é um eletrodo e se a solução correspondente já foi colocada
-    if (componentId.includes('electrode')) {
-      const solutionZone = componentId === 'zn-electrode' ? 'zone-zn-solution' : 'zone-cu-solution';
-      if (!placed[solutionZone as ZoneId]) return null;
-    }
-    
-    return zones.find(zone => 
-      zone.id === component.targetZone && 
-      !zone.isOccupied && 
-      zone.isEnabled &&
-      checkCollision(dragX, dragY, zone)
-    ) || null;
+  const highlight = (x: number, y: number, id: ComponentId) => {
+    const valid = findZoneFor(x, y, id);
+    setZones(prev => prev.map(z => ({ ...z, isHighlighted: valid?.id === z.id })));
   };
 
-  // Função para destacar zona durante drag
-  const highlightZone = (dragX: number, dragY: number, componentId: ComponentId) => {
-    const validZone = findValidZone(dragX, dragY, componentId);
-    
-    setZones(prev => prev.map(zone => ({
-      ...zone,
-      isHighlighted: validZone?.id === zone.id
-    })));
+  const enableElectrodeSlot = (solutionZone: ZoneId) => {
+    if (solutionZone === 'zone-zn-solution')
+      setZones(prev => prev.map(z => (z.id === 'slot-zn-electrode' ? { ...z, isEnabled: true } : z)));
+    if (solutionZone === 'zone-cu-solution')
+      setZones(prev => prev.map(z => (z.id === 'slot-cu-electrode' ? { ...z, isEnabled: true } : z)));
   };
 
-  // Função para habilitar slots de eletrodos
-  const enableElectrodeSlots = (solutionZoneId: ZoneId) => {
-    if (solutionZoneId === 'zone-zn-solution') {
-      setZones(prev => prev.map(zone => 
-        zone.id === 'slot-zn-electrode' ? { ...zone, isEnabled: true } : zone
-      ));
-    } else if (solutionZoneId === 'zone-cu-solution') {
-      setZones(prev => prev.map(zone => 
-        zone.id === 'slot-cu-electrode' ? { ...zone, isEnabled: true } : zone
-      ));
-    }
-  };
-
-  // Criar PanResponder para componente
-  const createPanResponder = (componentId: ComponentId) => {
-    return PanResponder.create({
+  /* ==================== Drag & Drop ==================== */
+  const createPanResponder = (id: ComponentId) =>
+    PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (evt, gestureState) => {
-        setDraggedComponent(componentId);
-        setDragPosition({ x: gestureState.x0, y: gestureState.y0 });
-        
-        // Animar componente sendo arrastado
-        if (componentAnimations[componentId]) {
-          Animated.timing(componentAnimations[componentId], {
-            toValue: 0.8,
-            duration: 150,
-            useNativeDriver: true,
-          }).start();
-        }
+      onPanResponderGrant: (_, g) => {
+        setDragged(id);
+        setDragPos({ x: g.x0, y: g.y0 });
+        Animated.timing(itemScale[id], { toValue: 0.9, duration: 120, useNativeDriver: true }).start();
       },
-      onPanResponderMove: (evt, gestureState) => {
-        const { moveX, moveY } = gestureState;
-        setDragPosition({ x: moveX, y: moveY });
-        highlightZone(moveX, moveY, componentId);
+      onPanResponderMove: (_, g) => {
+        setDragPos({ x: g.moveX, y: g.moveY });
+        highlight(g.moveX, g.moveY, id);
       },
-      onPanResponderRelease: (evt, gestureState) => {
-        const { moveX, moveY } = gestureState;
-        handleDrop(componentId, moveX, moveY);
-        
-        // Resetar animação
-        if (componentAnimations[componentId]) {
-          Animated.timing(componentAnimations[componentId], {
-            toValue: 1,
-            duration: 150,
-            useNativeDriver: true,
-          }).start();
-        }
-        
-        setDraggedComponent(null);
-        setZones(prev => prev.map(zone => ({ ...zone, isHighlighted: false })));
+      onPanResponderRelease: (_, g) => {
+        handleDrop(id, g.moveX, g.moveY);
+        Animated.timing(itemScale[id], { toValue: 1, duration: 120, useNativeDriver: true }).start();
+        setDragged(null);
+        setZones(prev => prev.map(z => ({ ...z, isHighlighted: false })));
       },
     });
-  };
 
-  // Função para lidar com drop
-  const handleDrop = (componentId: ComponentId, dropX: number, dropY: number) => {
-    const component = COMPONENTS.find(comp => comp.id === componentId);
-    if (!component) return;
+  const handleDrop = (id: ComponentId, x: number, y: number) => {
+    const def = COMPONENTS.find(c => c.id === id);
+    if (!def) return;
 
-    const validZone = findValidZone(dropX, dropY, componentId);
-    
-    if (validZone) {
-      // Drop válido - adicionar ao estado placed
-      setPlaced(prev => ({ ...prev, [validZone.id]: componentId }));
-      
-      // Marcar zona como ocupada
-      setZones(prev => prev.map(zone => 
-        zone.id === validZone.id 
-          ? { ...zone, isOccupied: true, occupiedBy: componentId }
-          : zone
-      ));
-      
-      // Remover da lista de disponíveis
-      setAvailableComponents(prev => prev.filter(comp => comp.id !== componentId));
-      
-      // Habilitar slots de eletrodos se for uma solução
-      if (componentId.includes('solution')) {
-        enableElectrodeSlots(validZone.id);
-      }
-      
-      // Mostrar sucesso
-      setShowSuccess(`${component.label} posicionado corretamente!`);
-      setTimeout(() => setShowSuccess(null), 2000);
-      
-      checkCompletion();
-    } else {
-      // Drop inválido - mostrar erro
-      setErrorMessage('Solte o componente em uma zona válida!');
-      setTimeout(() => setErrorMessage(null), 2000);
+    const zone = findZoneFor(x, y, id);
+    if (!zone) {
+      setErrorMsg('Solte o componente em uma zona válida!');
+      setTimeout(() => setErrorMsg(null), 1600);
+      return;
     }
+
+    setPlaced(p => ({ ...p, [zone.id]: id }));
+    setZones(prev => prev.map(z => (z.id === zone.id ? { ...z, isOccupied: true, occupiedBy: id } : z)));
+    setAvailable(prev => prev.filter(c => c.id !== id));
+    if (id.endsWith('solution')) enableElectrodeSlot(zone.id);
+
+    setOkMsg(`${def.label} posicionado corretamente!`);
+    setTimeout(() => setOkMsg(null), 1200);
+
+    checkCompletion();
   };
 
-  // Verificar conclusão
   const checkCompletion = () => {
-    const requiredZones: ZoneId[] = ['zone-lamp', 'zone-zn-solution', 'zone-cu-solution', 'zone-salt-bridge', 'slot-zn-electrode', 'slot-cu-electrode'];
-    const allPlaced = requiredZones.every(zoneId => placed[zoneId]);
-    
-    if (allPlaced) {
+    const req: ZoneId[] = [
+      'zone-lamp',
+      'zone-zn-solution',
+      'zone-cu-solution',
+      'zone-salt-bridge',
+      'slot-zn-electrode',
+      'slot-cu-electrode',
+    ];
+    const done = req.every(z => placed[z]);
+    if (done) {
       setIsComplete(true);
-      startLampGlow();
-      setTimeout(() => {
-        setShowElectronFlow(true);
-      }, 1000);
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(lampGlow, { toValue: 1, duration: 500, useNativeDriver: true }),
+          Animated.timing(lampGlow, { toValue: 0.3, duration: 500, useNativeDriver: true }),
+        ])
+      ).start();
+      setTimeout(() => setShowElectronFlow(true), 900);
     }
   };
 
-  // Animar brilho da lâmpada
-  const startLampGlow = () => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(lampGlowAnim, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(lampGlowAnim, {
-          toValue: 0.3,
-          duration: 500,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  };
-
-  // Resetar simulação
-  const resetSimulation = () => {
-    setAvailableComponents(COMPONENTS);
-    setZones(ZONES);
+  const reset = () => {
+    setAvailable(COMPONENTS);
+    setZones(INITIAL_ZONES);
     setPlaced({});
+    setDragged(null);
     setIsComplete(false);
     setShowElectronFlow(false);
-    lampGlowAnim.setValue(0);
-    setErrorMessage(null);
-    setShowSuccess(null);
+    lampGlow.setValue(0);
+    setErrorMsg(null);
+    setOkMsg(null);
   };
 
-  // Renderizar zona de drop
+  /* ==================== Render helpers ==================== */
   const renderDropZone = (zone: Zone) => {
-    const isElectrode = zone.id.includes('electrode');
-    const placedComponent = placed[zone.id as ZoneId];
-    
+    const placedId = placed[zone.id];
+
     return (
       <View
         key={zone.id}
-        ref={ref => zoneRefs.current[zone.id] = ref}
-        onLayout={(event) => measureZone(zone.id, event)}
+        ref={r => (zoneRefs.current[zone.id] = r)}
+        onLayout={e => measureZone(zone.id, e)}
         style={[
           styles.dropZone,
-          isElectrode && styles.electrodeZone,
+
+          // dimensões específicas
+          (zone.id === 'zone-zn-solution' || zone.id === 'zone-cu-solution') && styles.beakerZone,
+          zone.id === 'zone-salt-bridge' && styles.saltBridgeZone,
+          zone.id === 'zone-lamp' && styles.lampZone,
+
+          // slots dos eletrodos: a zona preenche o container absoluto do slot
+          (zone.id === 'slot-zn-electrode' || zone.id === 'slot-cu-electrode') && styles.slotFill,
+
+          // estados visuais
           {
-            borderColor: zone.isOccupied 
-              ? '#4CAF50' 
-              : zone.isHighlighted 
-                ? '#4CAF50' 
-                : zone.isEnabled
-                  ? '#aaa'
-                  : '#ccc',
-            backgroundColor: zone.isOccupied 
-              ? 'rgba(76, 175, 80, 0.1)' 
-              : zone.isHighlighted 
-                ? 'rgba(76, 175, 80, 0.2)' 
-                : zone.isEnabled
-                  ? 'rgba(240, 240, 240, 0.3)'
-                  : 'rgba(200, 200, 200, 0.2)',
+            borderColor: zone.isOccupied
+              ? '#4CAF50'
+              : zone.isHighlighted
+                ? '#4CAF50'
+                : '#aab0b4',
+            backgroundColor: zone.isOccupied
+              ? 'rgba(76,175,80,0.10)'
+              : zone.isHighlighted
+                ? 'rgba(76,175,80,0.18)'
+                : 'rgba(240,240,240,0.20)',
             borderWidth: zone.isHighlighted ? 2 : 1,
             opacity: zone.isEnabled ? 1 : 0.5,
           },
         ]}
       >
-        {placedComponent ? (
-          <View style={styles.placedComponentContainer}>
-            <Image 
-              source={COMPONENTS.find(c => c.id === placedComponent)?.image} 
-              style={styles.placedComponentImage} 
-            />
+        {placedId ? (
+          <View style={styles.placedWrap}>
+            <Image source={COMPONENTS.find(c => c.id === placedId)!.image} style={styles.placedImg} />
           </View>
         ) : (
-          <Text style={[
-            styles.zoneText, 
-            { 
-              color: zone.isOccupied || zone.isHighlighted ? '#4CAF50' : zone.isEnabled ? '#666' : '#999',
-              fontSize: isElectrode ? 8 : 12,
-            }
-          ]}>
-            {zone.label}
-          </Text>
+          <Text style={styles.zoneText}>{zone.label}</Text>
         )}
       </View>
     );
   };
 
-  // Renderizar componente arrastável
-  const renderDraggableComponent = (component: Component) => {
-    const panResponder = createPanResponder(component.id);
-    
+  const renderDraggable = (c: ComponentDef) => {
+    const pan = createPanResponder(c.id);
     return (
       <Animated.View
-        key={component.id}
-        style={[
-          styles.draggableComponent,
-          {
-            opacity: componentAnimations[component.id] || 1,
-            transform: [{ scale: componentAnimations[component.id] || 1 }],
-          },
-        ]}
-        {...panResponder.panHandlers}
+        key={c.id}
+        style={[styles.draggable, { transform: [{ scale: itemScale[c.id] || new Animated.Value(1) }] }]}
+        {...pan.panHandlers}
       >
-        <Image source={component.image} style={styles.draggableComponentImage} />
-        <Text style={styles.draggableComponentText}>{component.label}</Text>
+        <Image source={c.image} style={styles.draggableImg} />
+        <Text style={styles.draggableText}>{c.label}</Text>
       </Animated.View>
     );
   };
 
-  // Renderizar componente sendo arrastado (overlay)
-  const renderDraggedComponent = () => {
-    if (!draggedComponent) return null;
-    
-    const component = COMPONENTS.find(comp => comp.id === draggedComponent);
-    if (!component) return null;
-
-    const size = getComponentSize(component.id);
-    
+  const renderDraggedOverlay = () => {
+    if (!dragged) return null;
+    const comp = COMPONENTS.find(c => c.id === dragged)!;
+    const size = getOverlaySize(dragged);
     return (
       <Animated.View
-        style={[
-          styles.draggedComponentOverlay,
-          {
-            left: dragPosition.x - size / 2,
-            top: dragPosition.y - size / 2,
-            width: size,
-            height: size,
-          },
-        ]}
         pointerEvents="none"
+        style={[styles.dragOverlay, { left: dragPos.x - size / 2, top: dragPos.y - size / 2, width: size, height: size }]}
       >
-        <Image 
-          source={component.image} 
-          style={styles.draggedComponentImage} 
-        />
+        <Image source={comp.image} style={styles.dragOverlayImg} />
       </Animated.View>
     );
   };
 
-  // Função para obter tamanho do componente
-  const getComponentSize = (componentId: ComponentId): number => {
-    if (componentId.includes('electrode')) return 40;
-    if (componentId === 'lamp') return 50;
-    return 60;
+  const getOverlaySize = (id: ComponentId) => {
+    if (id.includes('electrode')) return 60;
+    if (id === 'lamp') return 76;
+    if (id === 'salt-bridge') return 110;
+    return 130; // bequers
   };
 
-  // Renderizar fios condutores
   const renderWires = () => {
     if (!isComplete) return null;
-    
-    const znZone = zones.find(z => z.id === 'slot-zn-electrode');
-    const cuZone = zones.find(z => z.id === 'slot-cu-electrode');
-    const lampZone = zones.find(z => z.id === 'zone-lamp');
-    
-    if (!znZone?.bounds || !cuZone?.bounds || !lampZone?.bounds) return null;
-    
+    const zn = zones.find(z => z.id === 'slot-zn-electrode')?.bounds;
+    const cu = zones.find(z => z.id === 'slot-cu-electrode')?.bounds;
+    const lp = zones.find(z => z.id === 'zone-lamp')?.bounds;
+    if (!zn || !cu || !lp) return null;
+
     return (
-      <View style={styles.wireContainer} pointerEvents="none">
-        {/* Fio do eletrodo esquerdo para a lâmpada */}
-        <View style={[
-          styles.wire,
-          {
-            left: znZone.bounds.x + znZone.bounds.width / 2,
-            top: znZone.bounds.y,
-            width: 3,
-            height: Math.abs(lampZone.bounds.y - znZone.bounds.y),
-          }
-        ]} />
-        
-        {/* Fio horizontal da lâmpada */}
-        <View style={[
-          styles.wire,
-          {
-            left: znZone.bounds.x + znZone.bounds.width / 2,
-            top: lampZone.bounds.y + lampZone.bounds.height / 2,
-            width: cuZone.bounds.x - znZone.bounds.x,
-            height: 3,
-          }
-        ]} />
-        
-        {/* Fio da lâmpada para o eletrodo direito */}
-        <View style={[
-          styles.wire,
-          {
-            left: cuZone.bounds.x + cuZone.bounds.width / 2,
-            top: lampZone.bounds.y + lampZone.bounds.height / 2,
-            width: 3,
-            height: Math.abs(cuZone.bounds.y - (lampZone.bounds.y + lampZone.bounds.height / 2)),
-          }
-        ]} />
+      <View style={styles.wires} pointerEvents="none">
+        <View style={[styles.wire, { left: zn.x + zn.width / 2, top: zn.y - 8, width: 2, height: lp.y - zn.y + 8 }]} />
+        <View style={[styles.wire, { left: zn.x + zn.width / 2, top: lp.y + lp.height / 2, width: cu.x - zn.x, height: 2 }]} />
+        <View style={[styles.wire, { left: cu.x + cu.width / 2, top: lp.y + lp.height / 2, width: 2, height: cu.y - (lp.y + lp.height / 2) + 8 }]} />
       </View>
     );
   };
 
-  // Renderizar lâmpada animada
-  const renderAnimatedLamp = () => {
+  const renderLampGlow = () => {
     if (!isComplete) return null;
-    
-    const lampZone = zones.find(z => z.id === 'zone-lamp');
-    if (!lampZone?.bounds) return null;
-    
+    const lp = zones.find(z => z.id === 'zone-lamp')?.bounds;
+    if (!lp) return null;
     return (
       <Animated.View
-        style={[
-          styles.animatedLamp,
-          {
-            left: lampZone.bounds.x,
-            top: lampZone.bounds.y,
-            width: lampZone.bounds.width,
-            height: lampZone.bounds.height,
-            opacity: lampGlowAnim,
-          },
-        ]}
         pointerEvents="none"
+        style={[styles.lampGlow, { left: lp.x, top: lp.y, width: lp.width, height: lp.height, opacity: lampGlow }]}
       >
-        <Image
-          source={require('@/assets/images/lampada.png')}
-          style={styles.lampImage}
-        />
+        <Image source={require('@/assets/images/lampada.png')} style={{ width: '100%', height: '100%', resizeMode: 'contain' }} />
       </Animated.View>
     );
   };
 
-  // Renderizar fluxo de elétrons
-  const renderElectronFlow = () => {
-    if (!showElectronFlow) return null;
-    
-    return (
-      <View style={styles.electronFlowContainer} pointerEvents="none">
-        <Image
-          source={require('@/assets/images/movimento_eletron.png')}
-          style={styles.electronFlowImage}
-        />
-      </View>
-    );
-  };
-
-  // Renderizar mensagem
-  const renderMessage = () => {
-    if (errorMessage) {
-      return (
-        <View style={styles.messageContainer}>
-          <Text style={styles.errorText}>{errorMessage}</Text>
-        </View>
-      );
-    }
-    
-    if (showSuccess) {
-      return (
-        <View style={styles.messageContainer}>
-          <Text style={styles.successText}>{showSuccess}</Text>
-        </View>
-      );
-    }
-    
-    return null;
-  };
-
+  /* ========================= Render ========================= */
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar hidden={true} />
-      
-      {/* Header */}
-      <LinearGradient
-        colors={['#1e3c72', '#2a5298']}
-        style={styles.header}
-      >
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Text style={styles.backButtonText}>← Voltar</Text>
+      <StatusBar hidden />
+      <LinearGradient colors={['#1e3c72', '#2a5298']} style={styles.header}>
+        <TouchableOpacity style={styles.headerBtn} onPress={() => router.back()}>
+          <Text style={styles.headerBtnText}>← Voltar</Text>
         </TouchableOpacity>
-        
-        <Text style={styles.title}>Animação da Pilha de Daniell</Text>
-        
-        <TouchableOpacity style={styles.resetButton} onPress={resetSimulation}>
-          <Text style={styles.resetButtonText}>Reiniciar</Text>
+        <Text style={styles.headerTitle}>Animação da Pilha de Daniell</Text>
+        <TouchableOpacity style={styles.headerBtn} onPress={reset}>
+          <Text style={styles.headerBtnText}>Reiniciar</Text>
         </TouchableOpacity>
       </LinearGradient>
 
-      {/* Instruções */}
       <View style={styles.instructions}>
         <Text style={styles.instructionsText}>
           Arraste os componentes para as zonas corretas para montar a Pilha de Daniell
         </Text>
       </View>
 
-      {/* Board Scroll - Área de Montagem */}
-      <ScrollView
-        ref={boardScrollRef}
-        style={styles.boardScroll}
-        contentContainerStyle={styles.boardContent}
-        showsVerticalScrollIndicator={false}
-        onScroll={(event) => {
-          setBoardScrollOffset(event.nativeEvent.contentOffset);
-        }}
-        scrollEventThrottle={16}
-      >
-        {/* Layout da Pilha de Daniell */}
-        <View style={styles.daniellLayout}>
-          {/* Lâmpada (topo) */}
-          <View style={styles.lampZoneContainer}>
-            {zones.filter(z => z.id === 'zone-lamp').map(renderDropZone)}
+      <ScrollView style={styles.board} contentContainerStyle={styles.boardContent} showsVerticalScrollIndicator={false}>
+        {/* Lâmpada */}
+        <View style={styles.rowTop}>{zones.filter(z => z.id === 'zone-lamp').map(renderDropZone)}</View>
+
+        {/* Béqueres + Ponte */}
+        <View style={styles.rowMiddle}>
+          <View style={styles.beakerWrap}>
+            {zones.filter(z => z.id === 'zone-zn-solution').map(renderDropZone)}
+            <View style={styles.slotZnAbs}>
+              {zones.filter(z => z.id === 'slot-zn-electrode').map(renderDropZone)}
+            </View>
           </View>
-          
-          {/* Meia-células (meio) */}
-          <View style={styles.cellsContainer}>
-            {/* Meia-célula esquerda (Zn) */}
-            <View style={styles.leftCell}>
-              <View style={styles.solutionContainer}>
-                {zones.filter(z => z.id === 'zone-zn-solution').map(renderDropZone)}
-                <View style={styles.electrodeSlot}>
-                  {zones.filter(z => z.id === 'slot-zn-electrode').map(renderDropZone)}
-                </View>
-              </View>
-            </View>
-            
-            {/* Ponte Salina (centro) */}
-            <View style={styles.saltBridgeContainer}>
-              {zones.filter(z => z.id === 'zone-salt-bridge').map(renderDropZone)}
-            </View>
-            
-            {/* Meia-célula direita (Cu) */}
-            <View style={styles.rightCell}>
-              <View style={styles.solutionContainer}>
-                {zones.filter(z => z.id === 'zone-cu-solution').map(renderDropZone)}
-                <View style={styles.electrodeSlot}>
-                  {zones.filter(z => z.id === 'slot-cu-electrode').map(renderDropZone)}
-                </View>
-              </View>
+
+          <View style={styles.bridgeWrap}>
+            {zones.filter(z => z.id === 'zone-salt-bridge').map(renderDropZone)}
+          </View>
+
+          <View style={styles.beakerWrap}>
+            {zones.filter(z => z.id === 'zone-cu-solution').map(renderDropZone)}
+            <View style={styles.slotCuAbs}>
+              {zones.filter(z => z.id === 'slot-cu-electrode').map(renderDropZone)}
             </View>
           </View>
         </View>
-        
-        {/* Fios condutores */}
+
         {renderWires()}
-        
-        {/* Lâmpada animada */}
-        {renderAnimatedLamp()}
-        
-        {/* Fluxo de elétrons */}
-        {renderElectronFlow()}
+        {renderLampGlow()}
+
+        {showElectronFlow && (
+          <View style={styles.electron} pointerEvents="none">
+            <Image
+              source={require('@/assets/images/movimento_eletron.png')}
+              style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
+            />
+          </View>
+        )}
       </ScrollView>
 
-      {/* Palette Container - Fixo no rodapé */}
-      <View style={styles.paletteContainer}>
-        <Text style={styles.panelTitle}>Componentes Disponíveis:</Text>
+      {/* Paleta */}
+      <View style={styles.palette}>
+        <Text style={styles.paletteTitle}>Componentes Disponíveis:</Text>
         <FlatList
-          data={availableComponents}
+          data={available}
           horizontal
+          keyExtractor={i => i.id}
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.paletteContent}
-          renderItem={({ item }) => renderDraggableComponent(item)}
-          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingVertical: 6 }}
+          renderItem={({ item }) => (
+            <Animated.View style={styles.draggable} {...createPanResponder(item.id).panHandlers}>
+              <Image source={item.image} style={styles.draggableImg} />
+              <Text style={styles.draggableText}>{item.label}</Text>
+            </Animated.View>
+          )}
         />
       </View>
 
-      {/* Overlay para componente sendo arrastado */}
-      {renderDraggedComponent()}
+      {/* Overlay do drag */}
+      {renderDraggedOverlay()}
 
       {/* Mensagens */}
-      {renderMessage()}
+      {errorMsg && (
+        <View style={styles.toastError}>
+          <Text style={styles.toastText}>{errorMsg}</Text>
+        </View>
+      )}
+      {okMsg && (
+        <View style={[styles.toastError, { backgroundColor: '#43a047' }]}>
+          <Text style={styles.toastText}>{okMsg}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
 
+/* ========================= Estilos ========================= */
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  backButton: {
-    padding: 8,
-  },
-  backButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  title: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    flex: 1,
-  },
-  resetButton: {
-    padding: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 5,
-  },
-  resetButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  instructions: {
-    backgroundColor: '#fff',
-    padding: 16,
-    marginHorizontal: 16,
-    borderRadius: 10,
-    marginBottom: 8,
-    elevation: 2,
-  },
-  instructionsText: {
-    fontSize: 16,
-    textAlign: 'center',
-    color: '#333',
-  },
-  boardScroll: {
-    flex: 1,
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    borderRadius: 10,
-    marginBottom: 8,
-    elevation: 2,
-  },
-  boardContent: {
-    padding: 16,
-    minHeight: 600,
-    alignItems: 'center',
-  },
-  daniellLayout: {
-    alignItems: 'center',
-    width: '100%',
-  },
-  lampZoneContainer: {
-    marginBottom: 20,
-  },
-  cellsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-    paddingHorizontal: 20,
-  },
-  leftCell: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  rightCell: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  saltBridgeContainer: {
-    alignItems: 'center',
-    marginHorizontal: 10,
-  },
-  solutionContainer: {
-    position: 'relative',
-    alignItems: 'center',
-  },
-  electrodeSlot: {
-    position: 'absolute',
-    width: '36%',
-    height: '55%',
-    bottom: '12%',
-    left: '32%',
-    zIndex: 5,
-  },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
+
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  headerBtn: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6 },
+  headerBtnText: { color: '#fff', fontWeight: '700' },
+  headerTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+
+  instructions: { backgroundColor: '#fff', padding: 14, marginHorizontal: 16, borderRadius: 10, marginBottom: 8, elevation: 2 },
+  instructionsText: { textAlign: 'center', color: '#333' },
+
+  board: { flex: 1, backgroundColor: '#fff', marginHorizontal: 16, borderRadius: 10, marginBottom: 8, elevation: 2 },
+  boardContent: { padding: 16, paddingBottom: 24, minHeight: 600 },
+
+  rowTop: { alignItems: 'center', marginBottom: 18 },
+  rowMiddle: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 8 },
+
+  beakerWrap: { flex: 1, alignItems: 'center', position: 'relative' },
+  bridgeWrap: { flex: 1, alignItems: 'center' },
+
+  /* Zonas base (sem tamanho fixo) */
   dropZone: {
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    aspectRatio: 1,
-    width: 100,
-    height: 100,
-  },
-  electrodeZone: {
-    width: 60,
-    height: 60,
-    marginBottom: 0,
-  },
-  zoneText: {
-    fontSize: 12,
-    textAlign: 'center',
-    color: '#666',
-    fontWeight: '500',
-  },
-  placedComponentContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    height: '100%',
-  },
-  placedComponentImage: {
-    width: '80%',
-    height: '80%',
-    resizeMode: 'contain',
-  },
-  wireContainer: {
-    position: 'absolute',
-    zIndex: 5,
-  },
-  wire: {
-    position: 'absolute',
-    backgroundColor: '#333',
-  },
-  animatedLamp: {
-    position: 'absolute',
-    zIndex: 20,
-  },
-  lampImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'contain',
-  },
-  electronFlowContainer: {
-    position: 'absolute',
-    top: 100,
-    left: '30%',
-    zIndex: 15,
-  },
-  electronFlowImage: {
-    width: '40%',
-    height: 60,
-    resizeMode: 'contain',
-  },
-  paletteContainer: {
-    backgroundColor: '#fff',
-    padding: 16,
-    marginHorizontal: 16,
     borderRadius: 10,
-    elevation: 2,
-    height: 120,
-  },
-  panelTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    color: '#333',
-  },
-  paletteContent: {
-    paddingVertical: 8,
-  },
-  draggableComponent: {
     alignItems: 'center',
-    marginRight: 16,
-    padding: 8,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    minWidth: 80,
+    justifyContent: 'center',
+    marginBottom: 12,
   },
-  draggableComponentImage: {
-    width: 40,
-    height: 40,
-    resizeMode: 'contain',
-  },
-  draggableComponentText: {
-    fontSize: 10,
-    textAlign: 'center',
-    marginTop: 4,
-    color: '#666',
-  },
-  draggedComponentOverlay: {
+
+  /* Dimensões por zona */
+  beakerZone: { width: '135%', aspectRatio: 1, zIndex: 3 },                 // bequers grandes
+  saltBridgeZone: { width: '200%', aspectRatio: 1.35, alignSelf: 'center', marginTop: -50, zIndex: 6 }, // ponte larga sobreposta
+  lampZone: { width: '38%', aspectRatio: 1, alignSelf: 'center' },
+
+  /* Slots absolutos dentro dos bequers (agora voltados para o centro) */
+  slotZnAbs: { position: 'absolute', width: '50%', height: '75%', bottom: '15%', right: '40%', zIndex: 5 },
+  slotCuAbs: { position: 'absolute', width: '55%', height: '75%', bottom: '15%', left: '40%', zIndex: 5 },
+
+  // A zona do slot preenche totalmente o container do slot
+  slotFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+
+  zoneText: { fontSize: 12, color: '#667085', fontWeight: '500', textAlign: 'center', paddingHorizontal: 4 },
+
+  placedWrap: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
+  placedImg: { width: '94%', height: '94%', resizeMode: 'contain' },
+
+  /* Fios e animações */
+  wires: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 7 },
+  wire: { position: 'absolute', backgroundColor: '#000' },
+  lampGlow: { position: 'absolute', zIndex: 20 },
+
+  electron: { position: 'absolute', left: '28%', top: 80, width: '44%', height: 60, zIndex: 12 },
+
+  /* Paleta */
+  palette: { backgroundColor: '#fff', padding: 14, marginHorizontal: 16, borderRadius: 10, elevation: 2, height: 120 },
+  paletteTitle: { fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 6 },
+  draggable: { alignItems: 'center', marginRight: 14, padding: 8, backgroundColor: '#f8f9fa', borderRadius: 10, minWidth: 84 },
+  draggableImg: { width: 44, height: 44, resizeMode: 'contain' },
+  draggableText: { fontSize: 10, marginTop: 4, color: '#666', textAlign: 'center' },
+
+  /* Overlay do drag */
+  dragOverlay: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2000,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
     elevation: 5,
-    zIndex: 2000,
   },
-  draggedComponentImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'contain',
-  },
-  messageContainer: {
+  dragOverlayImg: { width: '100%', height: '100%', resizeMode: 'contain' },
+
+  /* Toasts */
+  toastError: {
     position: 'absolute',
-    top: 100,
-    left: 32,
-    right: 32,
-    backgroundColor: '#f44336',
-    padding: 12,
-    borderRadius: 8,
+    top: 92,
+    left: 24,
+    right: 24,
+    backgroundColor: '#e53935',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     elevation: 5,
     zIndex: 3000,
   },
-  errorText: {
-    color: '#fff',
-    fontSize: 14,
-    textAlign: 'center',
-    fontWeight: 'bold',
-  },
-  successText: {
-    color: '#fff',
-    fontSize: 14,
-    textAlign: 'center',
-    fontWeight: 'bold',
-  },
-}); 
+  toastText: { color: '#fff', textAlign: 'center', fontWeight: '700' },
+});
