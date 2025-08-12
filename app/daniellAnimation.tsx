@@ -102,18 +102,48 @@ export default function DaniellAnimation() {
 
   useEffect(() => {
     COMPONENTS.forEach(c => (itemScale[c.id] = new Animated.Value(1)));
+    
+    // Força uma nova medição das zonas após um delay para garantir que todas tenham coordenadas
+    const timer = setTimeout(() => {
+      zones.forEach(zone => {
+        if (zoneRefs.current[zone.id]) {
+          zoneRefs.current[zone.id]?.measureInWindow((x, y) => {
+            // Usa as dimensões padrão se não conseguir medir
+            const width = 100;
+            const height = 100;
+            setZones(prev => prev.map(z => (z.id === zone.id ? { ...z, bounds: { x, y, width, height } } : z)));
+          });
+        }
+      });
+    }, 500);
+    
+    return () => clearTimeout(timer);
   }, []);
 
   /* ========================= Medição ========================= */
   const measureZone = (id: ZoneId, e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
-    zoneRefs.current[id]?.measureInWindow((x, y) => {
-      setZones(prev => prev.map(z => (z.id === id ? { ...z, bounds: { x, y, width, height } } : z)));
+    
+    // Usa requestAnimationFrame para garantir que a medição seja feita após o layout
+    requestAnimationFrame(() => {
+      zoneRefs.current[id]?.measureInWindow((x, y) => {
+        // Adiciona um pequeno delay para garantir que as coordenadas estejam corretas
+        setTimeout(() => {
+          setZones(prev => prev.map(z => (z.id === id ? { ...z, bounds: { x, y, width, height } } : z)));
+        }, 100);
+      });
     });
   };
 
   /* ==================== Colisão / Busca ==================== */
-  const inside = (x: number, y: number, b: Box) => x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height;
+  const inside = (x: number, y: number, b: Box) => {
+    // Adiciona uma margem de tolerância para facilitar o encaixe
+    const tolerance = 30;
+    return x >= b.x - tolerance && 
+           x <= b.x + b.width + tolerance && 
+           y >= b.y - tolerance && 
+           y <= b.y + b.height + tolerance;
+  };
 
   const findZoneFor = (x: number, y: number, id: ComponentId): Zone | null => {
     const def = COMPONENTS.find(c => c.id === id);
@@ -122,15 +152,21 @@ export default function DaniellAnimation() {
     if (id === 'zn-electrode' && !placed['zone-zn-solution']) return null;
     if (id === 'cu-electrode' && !placed['zone-cu-solution']) return null;
 
-    const z = zones.find(
-      zone =>
-        zone.id === def.targetZone &&
-        zone.isEnabled &&
-        !zone.isOccupied &&
-        zone.bounds &&
-        inside(x, y, zone.bounds)
-    );
-    return z ?? null;
+    // Procura pela zona correta
+    for (const zone of zones) {
+      if (zone.id === def.targetZone && 
+          zone.isEnabled && 
+          !zone.isOccupied && 
+          zone.bounds) {
+        
+        // Verifica se o ponto está dentro da zona com tolerância
+        if (inside(x, y, zone.bounds)) {
+          return zone;
+        }
+      }
+    }
+
+    return null;
   };
 
   const highlight = (x: number, y: number, id: ComponentId) => {
