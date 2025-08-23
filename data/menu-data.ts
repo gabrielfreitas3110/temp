@@ -106,6 +106,19 @@ export const MENU_DATA: IMenuData[] = [
     ],
   },
   {
+    id: "2.5",
+    title: "Potenciais-Padrão de Redução",
+    color: "#8e44ad",
+    pages: [
+      {
+        numero: 1,
+        texto: "Tabela completa dos potenciais-padrão de redução (E°) para 40 semi-reações químicas. Consulte os valores de potencial para determinar a espontaneidade de reações de oxirredução e identificar agentes oxidantes e redutores.",
+        link: "potenciaisReducao",
+        params: { title: "Potenciais-Padrão de Redução" },
+      },
+    ],
+  },
+  {
     id: "3",
     title: "Pilhas e Eletrólise",
     color: "#0288D1",

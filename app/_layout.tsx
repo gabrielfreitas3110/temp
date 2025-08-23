@@ -22,6 +22,7 @@ export default function RootLayout() {
       <Stack.Screen name="member" options={{ headerShown: false }} />
       <Stack.Screen name="videoPlayer" options={{ headerShown: false }} />
       <Stack.Screen name="daniellAnimation" options={{ headerShown: false }} />
+      <Stack.Screen name="potenciaisReducao" options={{ headerShown: false }} />
     </Stack>
   );
 }
